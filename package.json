@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "node scripts/run-production-tests.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
