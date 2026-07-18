@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "outDir": ".test-dist"
+  },
+  "include": [
+    "src/game/types.ts",
+    "src/game/data.ts",
+    "src/game/audio.ts",
+    "src/game/engine.ts",
+    "src/game/production-engine.ts",
+    "src/mp/session.ts",
+    "src/mp/sync.ts"
+  ]
+}
