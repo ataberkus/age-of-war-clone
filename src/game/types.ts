@@ -29,6 +29,23 @@ export interface UnitDef {
   mount?: 'dino' | 'horse' | 'cannon' | 'tank' | 'mech';
 }
 
+export interface ProductionEntry {
+  def: UnitDef;
+  ageIdx: number;
+  unitIdx: number;
+  cost: number;
+  duration: number;
+  remaining: number;
+}
+
+export interface ProductionQueueViewEntry {
+  ageIdx: number;
+  unitIdx: number;
+  duration: number;
+  remaining: number;
+  ready: boolean;
+}
+
 export interface TurretDef {
   id: string;
   name: string;
