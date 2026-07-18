@@ -1,5 +1,7 @@
-import { AGES, TURRET_SLOTS } from '../game/data';
+import { AGES, TURRET_SLOTS, UNIT_QUEUE_CAP, unitTrainingTime } from '../game/data';
 import type { HudSnapshot } from '../game/engine';
+import { cancelLocalQueuedUnit } from '../game/production-engine';
+import type { ProductionQueueViewEntry } from '../game/types';
 
 interface Props {
   snap: HudSnapshot;
@@ -13,6 +15,11 @@ interface Props {
   onPause: () => void;
   onMute: () => void;
 }
+
+type QueueSnapshot = HudSnapshot & {
+  productionQueue?: ProductionQueueViewEntry[];
+  productionQueueCapacity?: number;
+};
 
 function HpBar({ hp, max, label, right }: { hp: number; max: number; label: string; right?: boolean }) {
   const frac = Math.max(0, hp / max);
@@ -34,6 +41,10 @@ export default function HUD({ snap, paused, muted, isMp, onBuyUnit, onBuyTurret,
   const cdFrac = snap.specialMax > 0 ? snap.specialCd / snap.specialMax : 0;
   const isLastAge = snap.ageIdx >= AGES.length - 1;
   const xpFrac = isLastAge ? 1 : Math.min(1, snap.xp / snap.evolveCost);
+  const queueSnap = snap as QueueSnapshot;
+  const productionQueue = queueSnap.productionQueue ?? [];
+  const productionQueueCapacity = queueSnap.productionQueueCapacity ?? UNIT_QUEUE_CAP;
+  const queueFull = productionQueue.length >= productionQueueCapacity;
 
   return (
     <div className="z-10 flex flex-col bg-stone-950/95 ring-1 ring-white/10 backdrop-blur">
@@ -79,17 +90,78 @@ export default function HUD({ snap, paused, muted, isMp, onBuyUnit, onBuyTurret,
         </div>
       </div>
 
+      {/* compact production queue */}
+      <div className="flex items-center gap-2 px-2 pt-1.5 sm:px-3">
+        <span className="shrink-0 text-[10px] font-black uppercase tracking-widest text-amber-300">
+          Queue
+        </span>
+
+        <div className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
+          {productionQueue.length === 0 && (
+            <div className="flex h-11 items-center text-[11px] font-medium text-stone-500">
+              Select a unit to begin training
+            </div>
+          )}
+
+          {productionQueue.map((entry, queueIndex) => {
+            const def = AGES[entry.ageIdx]?.units[entry.unitIdx];
+            if (!def) return null;
+
+            const active = queueIndex === 0;
+            const progress = entry.duration > 0
+              ? Math.max(0, Math.min(1, 1 - entry.remaining / entry.duration))
+              : 1;
+
+            return (
+              <button
+                key={`${entry.ageIdx}-${entry.unitIdx}-${queueIndex}`}
+                type="button"
+                disabled={active}
+                onClick={() => cancelLocalQueuedUnit(queueIndex)}
+                aria-label={active ? `Training ${def.name}` : `Cancel queued ${def.name}`}
+                title={active ? `${def.name} is training` : `Cancel ${def.name} and refund ${def.cost} gold`}
+                className={`relative flex h-11 w-14 shrink-0 flex-col items-center justify-center overflow-hidden rounded-lg ring-1 ${
+                  active
+                    ? 'cursor-default bg-stone-800 ring-amber-400/70'
+                    : 'bg-stone-900 ring-white/15 active:scale-90'
+                }`}
+              >
+                {active && (
+                  <div
+                    className="absolute inset-x-0 bottom-0 bg-amber-500/35"
+                    style={{ height: `${progress * 100}%` }}
+                  />
+                )}
+                <span className="relative text-lg leading-none">{def.icon}</span>
+                <span className={`relative text-[9px] font-black ${entry.ready ? 'text-green-300' : 'text-stone-200'}`}>
+                  {active
+                    ? entry.ready
+                      ? 'READY'
+                      : `${entry.remaining.toFixed(1)}s`
+                    : '✕'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <span className={`shrink-0 text-[10px] font-black tabular-nums ${queueFull ? 'text-red-300' : 'text-stone-400'}`}>
+          {productionQueue.length} / {productionQueueCapacity}
+        </span>
+      </div>
+
       {/* bottom bar */}
       <div className="flex items-stretch gap-2 px-2 pb-2 pt-1.5 sm:px-3">
         {/* shop: units + turrets, horizontally scrollable */}
         <div className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
           {age.units.map((u, i) => {
-            const afford = snap.gold >= u.cost && !snap.over;
+            const afford = snap.gold >= u.cost && !queueFull && !snap.over;
             return (
               <button
                 key={u.id}
                 onClick={() => onBuyUnit(i)}
                 disabled={!afford}
+                aria-label={`Queue ${u.name}`}
                 className={`flex w-[74px] shrink-0 flex-col items-center rounded-xl px-1 pb-1 pt-1.5 ring-1 transition active:scale-90 ${
                   afford
                     ? 'bg-gradient-to-b from-stone-700 to-stone-800 ring-amber-400/40'
@@ -100,6 +172,9 @@ export default function HUD({ snap, paused, muted, isMp, onBuyUnit, onBuyTurret,
                 <span className="mt-0.5 max-w-full truncate text-[10px] font-semibold text-stone-200">{u.name}</span>
                 <span className={`text-[10px] font-bold tabular-nums ${afford ? 'text-amber-300' : 'text-stone-400'}`}>
                   💰{u.cost}
+                </span>
+                <span className="text-[9px] font-bold text-stone-400">
+                  {unitTrainingTime(i).toFixed(1)}s
                 </span>
               </button>
             );
