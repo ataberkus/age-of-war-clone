@@ -182,10 +182,10 @@ export class GameEngine {
     };
     this.specials.push({
       side,
-      ticksLeft: 9,
+      ticksLeft: 14,
       next: 0.15,
       kind: kindMap[def.id] ?? 'meteor',
-      damage: def.damage / 9,
+      damage: def.damage / 14, // same total damage, spread over a longer barrage
     });
     this.events.push('special');
     return true;
@@ -545,7 +545,7 @@ export class GameEngine {
       s.next -= dt;
       while (s.next <= 0 && s.ticksLeft > 0) {
         s.ticksLeft -= 1;
-        s.next += 0.2;
+        s.next += 0.32;
         // strike the foe's half: right side for the enemy caster, mirrored for the player
         const zoneMin = s.side === 'enemy' ? FIELD_W * 0.4 : FIELD_W * 0.06;
         const zoneMax = s.side === 'enemy' ? FIELD_W * 0.94 : FIELD_W * 0.6;
