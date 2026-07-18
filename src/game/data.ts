@@ -14,6 +14,16 @@ export const EVOLVE_COSTS = [210, 780, 2250, 5600];
 export const PASSIVE_GOLD = 2.6;
 export const PASSIVE_XP = 1.6;
 
+export const UNIT_QUEUE_CAP = 20;
+export const LIVING_UNIT_CAP = 50;
+export const UNIT_TRAINING_TIMES = [1.5, 2.5, 4.0] as const;
+
+export function unitTrainingTime(unitIdx: number): number {
+  const duration = UNIT_TRAINING_TIMES[unitIdx];
+  if (duration === undefined) throw new Error(`Invalid unit slot: ${unitIdx}`);
+  return duration;
+}
+
 export const AGES: AgeDef[] = [
   {
     name: 'Stone Age',
