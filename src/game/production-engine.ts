@@ -21,10 +21,9 @@ declare module './engine' {
   }
 }
 
-// Compatibility export: existing callers can use the production-enabled engine
-// name while the actual constructor remains the original GameEngine.
-export const ProductionGameEngine = GameEngine;
-export type ProductionGameEngine = GameEngine;
+// Compatibility export: existing callers can keep the production-engine name
+// while the actual constructor remains the original GameEngine.
+export { GameEngine as ProductionGameEngine };
 
 export interface ProductionHudSnapshot extends HudSnapshot {
   productionQueue: ProductionQueueViewEntry[];
