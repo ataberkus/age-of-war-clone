@@ -1,4 +1,5 @@
 import { createClient, type RealtimeChannel } from '@supabase/supabase-js';
+import { setLocalQueueCancelHandler } from '../game/production-engine';
 import { SUPABASE_URL, SUPABASE_KEY } from './config';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -58,6 +59,11 @@ export class Session {
       },
     });
     const session = new Session(role, code, channel, clientId);
+    if (role === 'guest') {
+      setLocalQueueCancelHandler((queueIndex) => {
+        session.send('action', { type: 'cancelUnit', idx: queueIndex });
+      });
+    }
 
     channel
       .on('broadcast', { event: '*' }, ({ event, payload }) => {
@@ -101,6 +107,7 @@ export class Session {
   }
 
   close() {
+    if (this.role === 'guest') setLocalQueueCancelHandler(null);
     void supabase.removeChannel(this.channel);
   }
 }
