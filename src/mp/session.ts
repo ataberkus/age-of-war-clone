@@ -6,7 +6,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 export type Role = 'host' | 'guest';
 
 export interface MpAction {
-  type: 'buyUnit' | 'buyTurret' | 'evolve' | 'special';
+  type: 'buyUnit' | 'buyTurret' | 'evolve' | 'special' | 'cancelUnit';
   idx?: number;
 }
 
