@@ -1,9 +1,11 @@
-import { GameEngine, unitHeight, type HudSnapshot } from '../game/engine';
+import { unitHeight } from '../game/engine';
+import { ProductionGameEngine, type ProductionHudSnapshot } from '../game/production-engine';
 import {
-  AGES, FIELD_W, GROUND_Y, EVOLVE_COSTS,
+  AGES, FIELD_W, GROUND_Y, EVOLVE_COSTS, UNIT_QUEUE_CAP, unitTrainingTime,
 } from '../game/data';
 import type {
   Side, UnitEnt, ProjectileEnt, TurretEnt, ParticleEnt, FloatText, StrikeFx, ProjectileKind,
+  ProductionQueueViewEntry, UnitDef,
 } from '../game/types';
 import type { SfxName } from '../game/audio';
 import type { Session, MpAction } from './session';
@@ -16,8 +18,16 @@ const PROJ_KINDS: ProjectileKind[] = ['stone', 'arrow', 'bolt', 'bullet', 'shell
 const STRIKE_KINDS: StrikeFx['kind'][] = ['meteor', 'arrow', 'shell', 'bomb', 'beam'];
 const MAX_PROJS_SENT = 22;
 
+function unitDefCode(def: UnitDef): number {
+  for (let ageIdx = 0; ageIdx < AGES.length; ageIdx++) {
+    const unitIdx = AGES[ageIdx].units.indexOf(def);
+    if (unitIdx >= 0) return ageIdx * 10 + unitIdx;
+  }
+  throw new Error(`Unknown unit definition: ${def.id}`);
+}
+
 // unit code: age*10 + slot; turret code: 100 + age*10 + slot
-type PackedSnap = [
+export type PackedSnap = [
   number, // 0 t
   [number, number], // 1 gold
   [number, number], // 2 xp
@@ -32,13 +42,14 @@ type PackedSnap = [
   [number, number], // 11 kills
   number, // 12 over 0/1
   number, // 13 winner -1 | 0 | 1
+  [number[][], number[][]], // 14 queues [defCode, remainingTenths]
 ];
 
-function buildSnapshot(e: GameEngine): PackedSnap {
+export function buildSnapshot(e: ProductionGameEngine): PackedSnap {
   const units: number[][] = e.units.map((u) => [
     u.uid,
     u.side === 'player' ? 0 : 1,
-    e.ageIdx[u.side] * 10 + e.age(u.side).units.indexOf(u.def),
+    unitDefCode(u.def),
     Math.round(u.x),
     Math.round(u.hp),
     Math.round(u.dieT * 10),
@@ -56,6 +67,12 @@ function buildSnapshot(e: GameEngine): PackedSnap {
     e.turrets[sd].map((t) => (t ? 100 + e.ageIdx[sd] * 10 + e.age(sd).turrets.indexOf(t.def) : null)),
   );
   const strikes: number[][] = e.strikes.map((s) => [Math.round(s.x), STRIKE_KINDS.indexOf(s.kind)]);
+  const queues = (['player', 'enemy'] as Side[]).map((side) =>
+    e.productionQueues[side].map((entry) => [
+      entry.ageIdx * 10 + entry.unitIdx,
+      Math.round(Math.max(0, entry.remaining) * 10),
+    ]),
+  ) as [number[][], number[][]];
   return [
     Math.round(e.time * 10) / 10,
     [Math.floor(e.gold.player), Math.floor(e.gold.enemy)],
@@ -71,6 +88,7 @@ function buildSnapshot(e: GameEngine): PackedSnap {
     [e.kills.player, e.kills.enemy],
     e.over ? 1 : 0,
     e.winner === null ? -1 : e.winner === 'player' ? 0 : 1,
+    queues,
   ];
 }
 
@@ -78,10 +96,10 @@ function buildSnapshot(e: GameEngine): PackedSnap {
 
 export class HostSync {
   private sendT = 0;
-  private engine: GameEngine;
+  private engine: ProductionGameEngine;
   private session: Session;
 
-  constructor(engine: GameEngine, session: Session) {
+  constructor(engine: ProductionGameEngine, session: Session) {
     this.engine = engine;
     this.session = session;
     engine.aiEnabled = false;
@@ -98,6 +116,7 @@ export class HostSync {
       case 'buyTurret': e.buyTurret('enemy', a.idx ?? 0); break;
       case 'evolve': e.evolve('enemy'); break;
       case 'special': e.useSpecial('enemy'); break;
+      case 'cancelUnit': e.cancelQueuedUnit('enemy', a.idx ?? -1); break;
     }
   }
 
@@ -117,6 +136,24 @@ type LocalProj = ProjectileEnt & { localAge: number };
 const mirrorSide = (s: Side): Side => (s === 'enemy' ? 'player' : 'enemy');
 const sideFromBit = (b: number): Side => (b === 0 ? 'player' : 'enemy');
 const mx = (x: number) => FIELD_W - x;
+
+function unpackQueue(rows: number[][]): ProductionQueueViewEntry[] {
+  return rows.flatMap(([defCode, remainingTenths]) => {
+    const ageIdx = Math.floor(defCode / 10);
+    const unitIdx = defCode % 10;
+    const def = AGES[ageIdx]?.units[unitIdx];
+    if (!def) return [];
+
+    const remaining = Math.max(0, remainingTenths / 10);
+    return [{
+      ageIdx,
+      unitIdx,
+      duration: unitTrainingTime(unitIdx),
+      remaining,
+      ready: remaining <= 0,
+    }];
+  });
+}
 
 /**
  * The guest renders a mirrored "shadow" of the host's authoritative state.
@@ -138,6 +175,10 @@ export class GuestSync {
   over = false;
   winner: Side | null = null;
   events: SfxName[] = [];
+  productionQueues: Record<Side, ProductionQueueViewEntry[]> = {
+    player: [],
+    enemy: [],
+  };
 
   gold = 0;
   xp = 0;
@@ -299,6 +340,11 @@ export class GuestSync {
       this.strikes.push({ x, y: GROUND_Y, t: 0, kind, delay: 0, exploded: false });
     }
 
+    this.productionQueues = {
+      player: unpackQueue(s[14][1]),
+      enemy: unpackQueue(s[14][0]),
+    };
+
     // game over
     if (s[12] === 1) {
       if (!this.over) {
@@ -311,6 +357,12 @@ export class GuestSync {
   }
 
   update(dt: number) {
+    const activeQueueEntry = this.productionQueues.player[0];
+    if (activeQueueEntry && activeQueueEntry.remaining > 0) {
+      activeQueueEntry.remaining = Math.max(0, activeQueueEntry.remaining - dt);
+      activeQueueEntry.ready = activeQueueEntry.remaining <= 0;
+    }
+
     this.specialCd = Math.max(0, this.specialCd - dt);
     this.shake = Math.max(0, this.shake - dt * 1.4);
     this.baseFlash.player = Math.max(0, this.baseFlash.player - dt);
@@ -369,7 +421,7 @@ export class GuestSync {
     this.particles.push({ x, y, vx, vy, life, maxLife: life, size, color, gravity });
   }
 
-  getSnapshot(): HudSnapshot {
+  getSnapshot(): ProductionHudSnapshot {
     const canEvolve = this.ageIdx.player < AGES.length - 1 && this.xp >= EVOLVE_COSTS[this.ageIdx.player];
     return {
       gold: Math.floor(this.gold),
@@ -389,6 +441,8 @@ export class GuestSync {
       kills: this.kills,
       time: this.time,
       turretsUsed: this.turrets.player.filter(Boolean).length,
+      productionQueue: this.productionQueues.player.map((entry) => ({ ...entry })),
+      productionQueueCapacity: UNIT_QUEUE_CAP,
     };
   }
 }
